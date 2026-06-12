@@ -1,11 +1,8 @@
-// 名刺画像をClaudeに送って構造化JSONを返すAPIルート
-// APIキーはサーバー側の環境変数 ANTHROPIC_API_KEY で管理する
-
 export async function POST(req) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return Response.json(
-      { error: "ANTHROPIC_API_KEY が設定されていません。.env.local を確認してください。" },
+      { error: "GEMINI_API_KEY が設定されていません。" },
       { status: 500 }
     );
   }
@@ -25,59 +22,30 @@ export async function POST(req) {
   const mediaType = match[1].toLowerCase();
   const base64 = match[2];
 
-  const supported = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-  if (!supported.includes(mediaType)) {
-    return Response.json(
-      { error: `非対応の画像形式です（${mediaType}）。JPEG/PNGでお試しください。` },
-      { status: 400 }
-    );
-  }
-
-  const prompt =
-    "この名刺画像から情報を抽出し、以下のキーを持つJSONオブジェクトのみを返してください。" +
-    "前置き・説明・コードブロック記号は一切不要です。読み取れない項目は空文字にしてください。\n" +
-    '{"name":"氏名","kana":"ふりがな(なければ空)","company":"会社名","title":"役職",' +
-    '"phone":"固定電話","mobile":"携帯電話","email":"メールアドレス",' +
-    '"postal":"郵便番号","address":"住所","website":"WebサイトURL"}';
+  const prompt = "この名刺画像から情報を抽出し、以下のキーを持つJSONオブジェクトのみを返してください。前置き・説明・コードブロック記号は一切不要です。読み取れない項目は空文字にしてください。\n{\"name\":\"氏名\",\"kana\":\"ふりがな\",\"company\":\"会社名\",\"title\":\"役職\",\"phone\":\"固定電話\",\"mobile\":\"携帯電話\",\"email\":\"メールアドレス\",\"postal\":\"郵便番号\",\"address\":\"住所\",\"website\":\"WebサイトURL\"}";
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: { type: "base64", media_type: mediaType, data: base64 },
-              },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
-      }),
-    });
+    const res = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ inline_data: { mime_type: mediaType, data: base64 } }, { text: prompt }] }],
+          generationConfig: { temperature: 0 },
+        }),
+      }
+    );
 
     const data = await res.json();
     if (!res.ok) {
-      return Response.json(
-        { error: data?.error?.message || `Anthropic APIエラー (${res.status})` },
-        { status: 502 }
-      );
+      return Response.json({ error: data?.error?.message || "Gemini APIエラー" }, { status: 502 });
     }
 
-    const text = (data.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
+    const text = ((data.candidates || [])[0]?.content?.parts || []).map((p) => p.text || "").join("\n");
     const clean = text.replace(/```json|```/g, "").trim();
     const start = clean.indexOf("{");
     const end = clean.lastIndexOf("}");
